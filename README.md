@@ -1,23 +1,74 @@
-# WhatsApp Cloud API + LLM Deterministic Handoff Engine
+# WhatsApp Cloud API Handoff Engine
 
-Arquitectura de referencia en **Python + FastAPI** para operar asistentes conversacionales de ventas sobre **Meta WhatsApp Business Cloud API** e **IA Generativa (Gemini / OpenAI)** en entornos comerciales reales sin alucinaciones de precios ni colisiones con operadores humanos.
+**Language:** **English** · [Español (README.es.md)](README.es.md)
 
-> **Autor:** Víctor Yohan Betancourt Marín — [quanticosystems.com](https://quanticosystems.com)  
-> *Nota: Este repositorio contiene una implementación demostrativa con catálogo 100% sintético para portafolio técnico.*
+[![CI](https://github.com/Mc3yohan/whatsapp-ai-handoff-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/Mc3yohan/whatsapp-ai-handoff-engine/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-38bdf8?style=flat-square)](LICENSE)
 
-## Problemas reales de producción que resuelve
-1. **Idempotencia ante reintentos de Meta (`wamid`):** Evita respuestas o cobros duplicados cuando Meta reenvía webhooks por latencia de red.
-2. **Cero alucinaciones en precios y stock (`Decimal`):** Los precios en USD y su conversión multimoneda a tasa del día se calculan con aritmética `Decimal` exacta (`ROUND_HALF_UP`), nunca con `float` ni estimaciones del LLM.
-3. **Máquina de estados determinista (`BOT_ACTIVE` → `HUMAN_PENDING` → `HUMAN_ACTIVE`):** Al detectar intención de pago (*Pago Móvil, Zelle, Binance, comprobante*) o solicitud de asesor, el bot transfiere la sesión y **jamás vuelve a interrumpir** mientras un humano atiende el caso.
-4. **Fallo seguro (*Fail-Closed*):** Si el proveedor externo de IA presenta timeout o cuota agotada, la conversación pasa automáticamente a cola de atención humana pendiente en lugar de devolver errores crudos o falsos éxitos.
+FastAPI webhook service demonstrating the core backend patterns behind WhatsApp Business Cloud API sales assistants: **HMAC-SHA256 webhook verification**, **crash-safe `wamid` idempotency in SQLite WAL**, **exact `Decimal` currency conversion**, and a **deterministic human-handoff state machine**.
 
-## Estructura
-- `app/main.py` — API FastAPI, verificación oficial `hub.challenge` de Meta, motor de estados y endpoints de toma/liberación por operador.
-- `tests/test_handoff.py` — Suite automatizada con `pytest` validando idempotencia, precisión monetaria, escalamiento y ciclo de atención humana.
+---
 
-## Ejecución rápida y pruebas
+## Why These Patterns Matter in Real Deployments
+
+Most WhatsApp bots break in four predictable ways once real customers start messaging:
+
+1. **Duplicate deliveries (`wamid` retries):** Meta retries webhooks whenever network jitter delays an ACK. `SQLiteHandoffStore.claim_message_id()` records every `message_id` atomically (`INSERT OR IGNORE` on primary key), so retries return `duplicate_ignored` even across process restarts.
+2. **Unsigned or spoofed webhook payloads:** When `WHATSAPP_APP_SECRET` is configured, `POST /webhook/messages` verifies `X-Hub-Signature-256` against the raw request bytes in constant time (`hmac.compare_digest`) and rejects invalid or missing signatures with `401`.
+3. **Bots talking over human agents:** Once payment intent (*Pago Móvil, Zelle, Binance, comprobante*) or an agent request triggers `HUMAN_PENDING`, or an operator takes over (`HUMAN_ACTIVE`), the bot stays silent until explicitly released (`POST /conversations/{wa_id}/release`).
+4. **Price hallucinations and float drift:** Catalog quotes compute USD -> VES totals with `Decimal` (`ROUND_HALF_UP`), rejecting `float` inputs outright. External LLM timeouts escalate cleanly to `HUMAN_PENDING` instead of leaking raw errors.
+
+> **Scope note:** The catalog (`DEMO_CATALOG`) is synthetic and the external LLM call is modeled via a toggleable timeout flag so the entire webhook, persistence, HMAC, and handoff lifecycle can be tested locally with zero paid API keys.
+
+---
+
+## Project Layout
+
+```text
+app/
+├── main.py       # FastAPI app factory, /health, /webhook, /webhook/messages, operator routes
+├── engine.py     # Conversation state machine & accent-insensitive catalog responder
+├── store.py      # Thread-safe SQLite WAL persistence (sessions, processed_messages, audit_events)
+├── security.py   # Constant-time Meta hub.verify_token & X-Hub-Signature-256 HMAC validation
+└── models.py     # Pydantic schemas, Decimal quantizer, and domain dataclasses
+tests/
+└── test_handoff.py
+Dockerfile
+```
+
+---
+
+## Quick Start
+
+### Local (Python 3.11+)
 ```bash
 pip install -r requirements.txt
-pytest -q
-uvicorn app.main:app --reload
+pytest -v
+
+# Start locally with durable SQLite WAL + optional Meta HMAC enforcement
+HANDOFF_DB_PATH=./data/handoff.db WHATSAPP_APP_SECRET=change-me \
+  uvicorn app.main:app --reload
 ```
+
+### Docker
+```bash
+docker build -t whatsapp-handoff-engine .
+docker run --rm -p 8000:8000 \
+  -e WHATSAPP_VERIFY_TOKEN=demo-verify-token \
+  -e WHATSAPP_APP_SECRET=change-me \
+  whatsapp-handoff-engine
+```
+
+### Example Webhook Request (Unsigned Demo Mode)
+```bash
+curl -s -X POST http://127.0.0.1:8000/webhook/messages \
+  -H "Content-Type: application/json" \
+  -d '{"message_id":"wamid.demo01","wa_id":"584240000001","text":"Precio del aceite 4T"}'
+```
+
+---
+
+## Author & License
+
+Built by **Víctor Yohan Betancourt Marín** — [quanticosystems.com](https://quanticosystems.com).  
+Released under the [MIT License](LICENSE).
