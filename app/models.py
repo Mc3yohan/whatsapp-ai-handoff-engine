@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from enum import Enum
 from typing import List, Optional
 
@@ -14,10 +14,29 @@ TWOPLACES = Decimal("0.01")
 
 
 def quantize_money(value: Decimal | str | int) -> Decimal:
-    """Quantize monetary values using ROUND_HALF_UP and explicitly reject float."""
+    """Quantize monetary values to 2 decimal places (ROUND_HALF_UP) and reject float."""
     if isinstance(value, float):
         raise TypeError("Floats are forbidden for monetary calculations; use Decimal or str.")
-    return Decimal(value).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+    try:
+        dec = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Invalid monetary value: {value!r}") from exc
+    if not dec.is_finite():
+        raise ValueError(f"Non-finite monetary value: {value!r}")
+    return dec.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+
+
+def validate_exchange_rate(value: Decimal | str | int) -> Decimal:
+    """Validate a strictly positive finite exchange rate without truncating sub-cent precision."""
+    if isinstance(value, float):
+        raise TypeError("Floats are forbidden for exchange rates; use Decimal or str.")
+    try:
+        dec = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Invalid exchange rate: {value!r}") from exc
+    if not dec.is_finite() or dec <= Decimal("0"):
+        raise ValueError(f"Exchange rate must be strictly positive: {value!r}")
+    return dec
 
 
 class ConversationState(str, Enum):

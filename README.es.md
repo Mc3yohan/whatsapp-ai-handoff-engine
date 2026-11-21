@@ -41,9 +41,11 @@ Dockerfile
 ### Local (Python 3.11+)
 ```bash
 pip install -r requirements.txt
-pytest -v
+PYTHONPATH=. pytest -v
 
-HANDOFF_DB_PATH=./data/handoff.db WHATSAPP_APP_SECRET=cambia-esto \
+HANDOFF_DB_PATH=./data/handoff.db \
+  WHATSAPP_APP_SECRET=cambia-esto \
+  OPERATOR_API_KEY=clave-operador \
   uvicorn app.main:app --reload
 ```
 
@@ -53,7 +55,20 @@ docker build -t whatsapp-handoff-engine .
 docker run --rm -p 8000:8000 \
   -e WHATSAPP_VERIFY_TOKEN=demo-verify-token \
   -e WHATSAPP_APP_SECRET=cambia-esto \
+  -e OPERATOR_API_KEY=clave-operador \
   whatsapp-handoff-engine
+```
+
+### Ejemplos con `curl` (Modo Demo Sin Firma)
+```bash
+# Mensaje entrante por webhook
+curl -s -X POST http://127.0.0.1:8000/webhook/messages \
+  -H "Content-Type: application/json" \
+  -d '{"message_id":"wamid.demo01","wa_id":"584240000001","text":"Precio del aceite 4T"}'
+
+# Inspección y toma por operador (requiere X-API-Key, por defecto demo-operator-key)
+curl -s http://127.0.0.1:8000/conversations/584240000001 \
+  -H "X-API-Key: demo-operator-key"
 ```
 
 ---
